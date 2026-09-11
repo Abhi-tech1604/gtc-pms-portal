@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ClipboardCheck, FileClock, Plus } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, FileClock, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { date, count, todayIso } from '../../lib/format';
 import type { DrrMyRigRoles, DrrReportSummary, DrrStatusCounts } from '../../lib/types';
 import { useAuth } from '../../lib/auth';
-import { Empty, ErrorBox, PageHeader, Spinner } from '../../components/ui';
+import { ConfirmDialog, Empty, ErrorBox, PageHeader, Spinner, useBusy } from '../../components/ui';
+
+type RecentFilter = 'All' | 'Submitted' | 'Draft';
 
 /**
  * Daily Rig Report's own landing page. Role-aware: a Storekeeper sees
@@ -19,13 +21,23 @@ import { Empty, ErrorBox, PageHeader, Spinner } from '../../components/ui';
  * disagree with what opening it shows.
  */
 export default function DrrDashboard() {
-  const { hasModuleAction } = useAuth();
+  const { hasModuleAction, isAdmin } = useAuth();
   const [myRoles, setMyRoles] = useState<DrrMyRigRoles | null>(null);
   const [counts, setCounts] = useState<DrrStatusCounts | null>(null);
   const [overdueApprovals, setOverdueApprovals] = useState<number | null>(null);
   const [today, setToday] = useState<DrrReportSummary[] | null>(null);
   const [recent, setRecent] = useState<DrrReportSummary[] | null>(null);
+  const [recentFilter, setRecentFilter] = useState<RecentFilter>('All');
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState<DrrReportSummary | null>(null);
+  const [busy, run] = useBusy();
+
+  function loadRecent(filter: RecentFilter) {
+    setRecent(null);
+    const query = filter === 'All' ? '' : `?status=${filter}`;
+    api.get<{ reports: DrrReportSummary[] }>(`/drr/reports${query}`).then((d) => setRecent(d.reports.slice(0, 10)))
+      .catch((e) => setError((e as Error).message));
+  }
 
   useEffect(() => {
     api.get<DrrMyRigRoles>('/drr/rig-responsibility/my').then(setMyRoles).catch(() => {});
@@ -35,9 +47,18 @@ export default function DrrDashboard() {
     const todayIsoStr = todayIso();
     api.get<{ reports: DrrReportSummary[] }>(`/drr/reports?dateFrom=${todayIsoStr}&dateTo=${todayIsoStr}`)
       .then((d) => setToday(d.reports)).catch((e) => setError((e as Error).message));
-    api.get<{ reports: DrrReportSummary[] }>('/drr/reports').then((d) => setRecent(d.reports.slice(0, 10)))
-      .catch((e) => setError((e as Error).message));
+    loadRecent('All');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    try {
+      await run(async () => { await api.del(`/drr/reports/${deleting.id}`); });
+      setDeleting(null);
+      loadRecent(recentFilter);
+    } catch (e) { setError((e as Error).message); setDeleting(null); }
+  }
 
   const isStorekeeper = !!myRoles && (myRoles.isAdmin || myRoles.storekeeperRigIds.length > 0);
   const isManager = !!myRoles && (myRoles.isAdmin || myRoles.managerRigIds.length > 0);
@@ -91,7 +112,18 @@ export default function DrrDashboard() {
       )}
 
       <div className="card">
-        <div className="card-header"><h3 className="card-title">Recent Reports</h3></div>
+        <div className="card-header flex items-center justify-between">
+          <h3 className="card-title">Recent Reports</h3>
+          <select
+            className="input w-auto text-xs py-1"
+            value={recentFilter}
+            onChange={(e) => { const f = e.target.value as RecentFilter; setRecentFilter(f); loadRecent(f); }}
+          >
+            <option value="All">All statuses</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Draft">Draft</option>
+          </select>
+        </div>
         <div className="overflow-x-auto">
           <table className="table">
             <thead><tr><th>Date</th><th>Rig</th><th>Well</th><th>Status</th><th /></tr></thead>
@@ -99,7 +131,7 @@ export default function DrrDashboard() {
               {!recent ? (
                 <tr><td colSpan={5}><Spinner /></td></tr>
               ) : recent.length === 0 ? (
-                <tr><td colSpan={5}><Empty message="No Daily Rig Reports have been filed yet." /></td></tr>
+                <tr><td colSpan={5}><Empty message={recentFilter === 'All' ? 'No Daily Rig Reports have been filed yet.' : `No ${recentFilter} reports.`} /></td></tr>
               ) : recent.map((r) => (
                 <tr key={r.id}>
                   <td className="font-medium whitespace-nowrap">{date(r.reportDate)}</td>
@@ -114,13 +146,35 @@ export default function DrrDashboard() {
                       {r.status === 'PendingApproval' ? 'Pending Approval' : r.status}
                     </span>
                   </td>
-                  <td className="text-right"><Link to={`/drr/reports/${r.id}`} className="text-rig-700 hover:underline text-xs">Open</Link></td>
+                  <td className="text-right whitespace-nowrap">
+                    <Link to={`/drr/reports/${r.id}`} className="text-rig-700 hover:underline text-xs">Open</Link>
+                    {isAdmin && (
+                      <button
+                        className="btn-ghost btn-sm ml-2 text-red-700"
+                        title="Delete this report"
+                        onClick={() => setDeleting(r)}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!deleting}
+        tone="danger"
+        title={`Delete the ${deleting ? date(deleting.reportDate) : ''} report for ${deleting?.rigNumber ?? ''}?`}
+        confirmLabel="Delete report"
+        busy={busy}
+        body={<p>This permanently removes the Daily Rig Report and, if it was Submitted, the DPR / HSD / Mechanical Log entries it created. This cannot be undone.</p>}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 }

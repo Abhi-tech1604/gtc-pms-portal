@@ -3,7 +3,7 @@ import { db, transact } from '../db/index.js';
 import { newId } from '../util/id.js';
 import { nowIso, today } from '../util/date.js';
 import { rigKey } from '../excel/normalize.js';
-import { assertRigAllowed, requireAuth, requireModulePermission, requirePage, rigScope } from '../middleware/auth.js';
+import { assertRigAllowed, requireAdmin, requireAuth, requireModulePermission, requirePage, rigScope } from '../middleware/auth.js';
 import { badRequest, notFound, wrap, HttpError } from '../middleware/http.js';
 import { audit } from '../services/audit.js';
 import { listEquipment, type EquipmentView } from '../services/equipmentView.js';
@@ -272,6 +272,37 @@ drrRouter.get('/reports/:id', requireAuth, requireModulePermission('DRR', 'view'
   if (!report) throw notFound('That Daily Rig Report does not exist.');
   assertDrrRigVisible(req, report.rigId);
   res.json({ report });
+}));
+
+/**
+ * Admin-only (role check, not the page-permission matrix — deleting a report
+ * across three modules' data at once is deliberately kept to the one role
+ * that's always unrestricted, not delegable per-user). A Submitted report
+ * already distributed its data into dpr_reports/hsd_reports/
+ * mechanical_log_uploads (see saveReport() below); deleting the DRR entry
+ * removes those too, so nothing it created is left behind, untraceable, in
+ * another module's history. A Draft has none of those yet (its data only
+ * ever lived in draftPayload), so only the drr_reports row itself applies.
+ */
+drrRouter.delete('/reports/:id', requireAuth, requireAdmin, wrap((req, res) => {
+  const existing = db.prepare<[string], {
+    id: string; rigId: string; reportDate: string; status: string;
+    dprReportId: string | null; hsdReportId: string | null; mechLogUploadId: string | null;
+  }>('SELECT id, rigId, reportDate, status, dprReportId, hsdReportId, mechLogUploadId FROM drr_reports WHERE id = ?').get(req.params.id);
+  if (!existing) throw notFound('That Daily Rig Report does not exist.');
+
+  transact(() => {
+    if (existing.dprReportId) db.prepare('DELETE FROM dpr_reports WHERE id = ?').run(existing.dprReportId);
+    if (existing.hsdReportId) db.prepare('DELETE FROM hsd_reports WHERE id = ?').run(existing.hsdReportId);
+    if (existing.mechLogUploadId) db.prepare('DELETE FROM mechanical_log_uploads WHERE id = ?').run(existing.mechLogUploadId);
+    // drr_attendance_lines / drr_oil_lines / drr_hydraulic_lines / drr_approval_history cascade via FK.
+    db.prepare('DELETE FROM drr_reports WHERE id = ?').run(existing.id);
+    audit({
+      user: req.user!.username, ip: req.clientIp, action: 'drr.delete',
+      entity: 'drr_reports', entityId: existing.id, oldValue: existing,
+    });
+  });
+  res.json({ ok: true });
 }));
 
 export interface DrrApprovalHistoryEntry {
