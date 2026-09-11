@@ -1,0 +1,19 @@
+node_modules/
+dist/
+data/
+data-test/
+*.log
+.env
+.env.*
+!.env.*.example
+!.env.test
+.DS_Store
+.claude/
+*.tsbuildinfo
+
+# Extra safety net: never let a real database file into git history,
+# regardless of which folder it ends up sitting in.
+*.db
+*.db-wal
+*.db-shm
+*.db.bak-*

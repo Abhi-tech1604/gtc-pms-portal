@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-slate-100 text-slate-800 antialiased;
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+}
+
+@layer components {
+  /* The interface must stay usable at 1366x768, the common on-site resolution. */
+  .card { @apply bg-white rounded-lg border border-slate-200 shadow-sm; }
+  .card-header { @apply px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3; }
+  .card-title { @apply text-sm font-semibold text-slate-700; }
+
+  .btn { @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium
+         border transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-rig-600 border-rig-600 text-white hover:bg-rig-700 hover:border-rig-700; }
+  .btn-ghost { @apply btn bg-white border-slate-300 text-slate-700 hover:bg-slate-50; }
+  .btn-danger { @apply btn bg-red-600 border-red-600 text-white hover:bg-red-700; }
+  .btn-sm { @apply px-2 py-1 text-xs; }
+
+  .input { @apply w-full px-2.5 py-1.5 rounded-md border border-slate-300 text-sm
+           focus:outline-none focus:ring-2 focus:ring-rig-500 focus:border-rig-500 bg-white; }
+  .label { @apply block text-xs font-medium text-slate-600 mb-1; }
+
+  .table { @apply w-full text-sm border-collapse; }
+  .table thead th {
+    @apply text-left text-[11px] uppercase tracking-wide font-semibold text-slate-500
+           bg-slate-50 px-3 py-2 border-b border-slate-200 whitespace-nowrap;
+  }
+  .table tbody td { @apply px-3 py-2 border-b border-slate-100 align-top; }
+  .table tbody tr:hover { @apply bg-slate-50; }
+  .num { @apply text-right tabular-nums whitespace-nowrap; }
+
+  .pill { @apply inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold; }
+  .pill-normal { @apply pill bg-emerald-100 text-emerald-800; }
+  .pill-upcoming { @apply pill bg-amber-100 text-amber-800; }
+  .pill-overdue { @apply pill bg-red-100 text-red-800; }
+  .pill-breakdown { @apply pill bg-slate-800 text-white; }
+  .pill-exempt { @apply pill bg-sky-100 text-sky-800; }
+  .pill-engine { @apply pill bg-indigo-100 text-indigo-800; }
+  .pill-transmission { @apply pill bg-purple-100 text-purple-800; }
+  .pill-place { @apply pill bg-slate-200 text-slate-700; }
+
+  .tab { @apply px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors; }
+  .tab-active { @apply tab border-rig-600 text-rig-700; }
+  .tab-idle { @apply tab border-transparent text-slate-500 hover:text-slate-700; }
+}
+
+/* Invoice Detail's Print button — hides everything except the invoice sheet itself (sidebar, filters, action buttons). */
+@media print {
+  body * { visibility: hidden; }
+  .invoice-print-area, .invoice-print-area * { visibility: visible; }
+  .invoice-print-area { position: absolute; left: 0; top: 0; width: 100%; }
+  .no-print { display: none !important; }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "pms-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Preventive Maintenance System portal for a drilling rig fleet",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server run start",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "test": "npm --prefix server test",
+    "backup": "npm --prefix server run backup"
+  }
+}
