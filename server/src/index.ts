@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { migrate } from './db/migrate.js';
 import { loadUser, requireModule } from './middleware/auth.js';
-import { errorHandler } from './middleware/http.js';
+import { errorHandler, wrap } from './middleware/http.js';
 import { authRouter } from './routes/auth.js';
 import { rigsRouter } from './routes/rigs.js';
 import { equipmentRouter } from './routes/equipment.js';
@@ -43,7 +43,8 @@ import { invoiceSettingsRouter } from './routes/invoiceSettings.js';
 import { smtpSettingsRouter } from './routes/smtpSettings.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { ensureSeed } from './db/seed.js';
-import { startNotificationScheduler } from './services/scheduler.js';
+import { startNotificationScheduler, stopNotificationScheduler } from './services/scheduler.js';
+import { healthCheck, shutdown as closePostgres } from './db/postgres.js';
 
 migrate();
 ensureSeed();
@@ -56,9 +57,40 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(loadUser);
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, timezone: config.timezone, time: new Date().toISOString() });
-});
+/**
+ * Liveness + database reachability. Reports the database NAME and round-trip
+ * time so an operator can tell a healthy connection from a slow one — never
+ * the host, user, password or connection string (see redact() in
+ * db/postgres.ts). Returns 503 when the database is unreachable so a monitor
+ * or load balancer sees the failure rather than a cheerful 200.
+ */
+app.get('/api/health', wrap(async (_req, res) => {
+  // During the SQLite -> PostgreSQL transition the application still reads
+  // SQLite until each module is converted, so health must report on the
+  // database actually in use. PostgreSQL is only probed once it is genuinely
+  // configured — otherwise a correctly-running SQLite deployment would report
+  // itself degraded and page someone for nothing.
+  if (!config.postgres.configured) {
+    res.json({
+      status: 'ok', ok: true, database: 'sqlite',
+      timezone: config.timezone, time: new Date().toISOString(),
+    });
+    return;
+  }
+
+  const db = await healthCheck();
+  res.status(db.connected ? 200 : 503).json({
+    status: db.connected ? 'ok' : 'degraded',
+    ok: db.connected,
+    database: 'postgresql',
+    databaseName: db.database,
+    databaseConnected: db.connected,
+    databaseResponseMs: db.responseMs,
+    ...(db.error ? { databaseError: db.error } : {}),
+    timezone: config.timezone,
+    time: new Date().toISOString(),
+  });
+}));
 
 // Brute-force protection on login only (spec 23) — every other endpoint is
 // already behind requireAuth, so it isn't a credential-guessing surface.
@@ -144,8 +176,30 @@ const server = app.listen(config.port, config.host, () => {
 
 startNotificationScheduler();
 
+/**
+ * Ordered shutdown: stop accepting new work (scheduler, then HTTP), and only
+ * then close the PostgreSQL pool, so no in-flight request loses its
+ * connection mid-query. Forced exit after 10s in case a socket refuses to
+ * drain.
+ */
+let shuttingDown = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    server.close(() => process.exit(0));
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} received — closing down.`);
+
+    const force = setTimeout(() => {
+      console.error('[shutdown] forced exit after timeout.');
+      process.exit(1);
+    }, 10_000);
+    force.unref();
+
+    stopNotificationScheduler();
+    server.close(() => {
+      void closePostgres()
+        .catch((err) => console.error('[shutdown] closing PostgreSQL pool failed:', (err as Error).message))
+        .finally(() => process.exit(0));
+    });
   });
 }

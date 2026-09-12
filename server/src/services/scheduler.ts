@@ -29,6 +29,8 @@ import { runDailyNotificationChecks } from './notifications.js';
  *     one or more ticks entirely.
  *  2. The cron job itself, on the hour, every hour.
  */
+let scheduledTask: ReturnType<typeof cron.schedule> | null = null;
+
 export function startNotificationScheduler(): void {
   try {
     const summary = runDailyNotificationChecks();
@@ -37,7 +39,7 @@ export function startNotificationScheduler(): void {
     console.error('[scheduler] startup catch-up run failed:', err);
   }
 
-  cron.schedule('0 * * * *', () => {
+  scheduledTask = cron.schedule('0 * * * *', () => {
     try {
       const summary = runDailyNotificationChecks();
       logSummary('hourly check', summary);
@@ -47,6 +49,12 @@ export function startNotificationScheduler(): void {
   }, { timezone: config.timezone });
 
   console.log(`[scheduler] Notification check scheduled hourly (${config.timezone}).`);
+}
+
+/** Stops the hourly cron so a shutdown isn't blocked by a pending tick. */
+export function stopNotificationScheduler(): void {
+  scheduledTask?.stop();
+  scheduledTask = null;
 }
 
 function logSummary(label: string, summary: Record<string, { created: number }>): void {
